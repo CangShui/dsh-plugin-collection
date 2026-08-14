@@ -1,3 +1,5 @@
+![OpenCode Go 用量演示](assets/demo.png)
+
 # dsh-plugin-opencode-go
 
 在 DSH Web GUI（http://127.0.0.1:3080）中实时展示 OpenCode Go 套餐的用量与剩余额度。
