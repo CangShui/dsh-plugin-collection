@@ -1,0 +1,29 @@
+{
+  "name": "dsh-plugin-opencode-go",
+  "version": "0.2.0",
+  "description": "OpenCode Go 套餐用量与剩余额度实时展示插件（Host 原生读取 DSH 凭据并轮询官方 usage API，Web 侧边栏/设置页展示）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.env
+.env.*
+settings.yaml
+.credentials.yaml
+auth.json
