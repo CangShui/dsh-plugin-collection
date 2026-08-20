@@ -93,7 +93,10 @@ const getReq = (ip, method = 'GET', url = '/api/about/status') => ({
 })
 const first = await call('/api/about/status', getReq('127.0.0.1'))
 assert.equal(first.status, 200)
-assert.equal(first.body.current, null, 'no dsh argv[1] in the test process -> null current (fine)')
+// current is null when the test cwd sits outside the dsh tree, or resolves
+// through the ~/.dsh/profiles module fallback when this suite runs from
+// inside a profile (the same anchor the real dsh process resolves through)
+assert.ok(first.body.current === null || /^\d+\.\d+/.test(first.body.current), 'current is null or a version string')
 assert.equal(first.body.loopback, true)
 assert.equal(first.body.viewerIp, '127.0.0.1')
 if (first.body.latestError === null) {
