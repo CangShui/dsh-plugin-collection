@@ -25,8 +25,13 @@ function resolveDeepseekPeers() {
   if (process.argv[1]) {
     candidates.push(join(dirname(process.argv[1]), '..', 'node_modules', '@deepseek-ai'));
   }
-  // Fallback: standard global npm install location.
-  candidates.push('C:/Users/Administrator/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai');
+  // Fallback: standard global npm install location, derived from the platform
+  // (npm global root lives under %APPDATA%\npm on Windows). No hardcoded user
+  // paths — the harness install is discovered relative to the running binary
+  // or the npm global root.
+  if (process.env.APPDATA) {
+    candidates.push(join(process.env.APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai'));
+  }
   for (const dir of candidates) {
     if (dir && existsSync(join(dir, 'dsh-settings', 'lib', 'index.js'))) return dir;
   }
