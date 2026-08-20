@@ -1,0 +1,35 @@
+{
+  "name": "dsh-web-search-brave",
+  "version": "0.1.0",
+  "description": "Brave Search API-backed search provider for the DeepSeek Harness web capability seam (ctx.web). Based on the official @deepseek-ai/dsh-web-search-exa and community @myflv/dsh-web-search-tavily provider patterns.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./provider": {
+      "default": "./lib/provider.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,30 @@
+# dsh-web-search-brave bundle patch: install the Brave search provider and
+# route the web seam's search capability to it.
+#
+# Applied as a bundle layer (after dsh-base / dsh-web-app / modsearch / ...):
+#   * the web-search-brave plugin row is inserted;
+#   * the `web` row's searchProvider is (re)pinned to `brave` — a patch row
+#     replaces the targeted row's whole config, so this overrides the
+#     modsearch bundle's `searchProvider: modsearch`;
+#   * the shipped DeepSeek search provider is disabled (its Anthropic-Messages
+#     wire shape cannot speak to Brave, and the user settings layer previously
+#     pointed it at a Brave endpoint, which fails with HTTP 422).
+# Remove this file's rows (or the package from dsh.profile.bundles) to revert.
+- insert:
+    - id: web-search-brave
+      name: 'dsh-web-search-brave'
+      # Base of the web-search-deepseek settings section (reused namespace so
+      # the Web GUI's built-in Search API card renders Brave's fields). The
+      # card's key control writes the credential at `apiKeyEnv`; baseURL is
+      # Brave's endpoint; maxUses is Brave's `count`.
+      config:
+        apiKeyEnv: BRAVE_API_KEY
+        baseURL: https://api.search.brave.com/res/v1
+        maxUses: 8
+
+- id: web
+  config:
+    searchProvider: brave
+
+- id: web-search-deepseek
+  disabled: true
