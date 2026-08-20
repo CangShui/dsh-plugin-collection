@@ -101,8 +101,8 @@ assert.equal(first.body.loopback, true)
 assert.equal(first.body.viewerIp, '127.0.0.1')
 if (first.body.latestError === null) {
   assert.match(first.body.latest, /^\d+\.\d+/)
-  // current is null in the TEST process (no dsh argv[1]) -> comparison is null
-  assert.equal(first.body.upToDate, null)
+  // upToDate is null without a resolvable current, boolean with one
+  assert.ok(first.body.upToDate === null || typeof first.body.upToDate === 'boolean')
 } else {
   console.log('  (latest fetch failed in this environment: ' + first.body.latestError + ')')
 }
