@@ -6,13 +6,15 @@
 //
 // - "current" is read from the RUNNING dsh installation's package.json on every
 //   request, so a finished upgrade flips the panel to "up to date" immediately.
-// - "latest" is fetched from the npm registry (registry configurable via the
-//   row config or ~/.npmrc) and cached for 5 minutes; ?refresh=1 forces a
-//   re-check.
-// - the upgrade spawns `npm install -g @deepseek-ai/dsh@latest` exactly like a
-//   manual upgrade: output is captured into a small ring buffer the panel polls.
-//   POST body { "dryRun": true } runs `npm --version` instead — a full-path
-//   self test that never touches the installation.
+// - channel versions ("latest", "next", …) are read from the npm packument's
+//   dist-tags (registry configurable via the row config or ~/.npmrc) and
+//   cached for 5 minutes; ?refresh=1 forces a re-check. A tag the registry
+//   doesn't publish (e.g. no "next" yet) just hides that channel.
+// - the upgrade spawns `npm install -g @deepseek-ai/dsh@<channel>` exactly
+//   like a manual upgrade: output is captured into a small ring buffer the
+//   panel polls. POST body { "channel": "next" } targets another dist-tag;
+//   { "dryRun": true } runs `npm --version` instead — a full-path self test
+//   that never touches the installation.
 //
 // The running dsh process keeps serving the old version until it is restarted;
 // upgrading under it is safe (proven by manual `npm i -g` while dsh runs: the
@@ -32,6 +34,7 @@ const inject = ['webServer']
 
 const PKG = '@deepseek-ai/dsh'
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org/'
+const DEFAULT_CHANNELS = ['latest', 'next']
 const LATEST_TTL_MS = 5 * 60 * 1000
 const LATEST_TIMEOUT_MS = 15 * 1000
 const UPGRADE_TIMEOUT_MS = 10 * 60 * 1000
@@ -124,6 +127,47 @@ export function resolveRegistry(entryConfig, env = process.env) {
     // unreadable .npmrc -> default below
   }
   return DEFAULT_REGISTRY
+}
+
+// ---------------------------------------------------------------------------
+// dist-tag channels
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalize the configured dist-tag channels: keep well-formed tags only,
+ * dedupe, cap at 8; fall back to ['latest', 'next'] when nothing valid
+ * remains. Exported for offline self-testing.
+ */
+export function normalizeChannels(raw) {
+  const fallback = [...DEFAULT_CHANNELS]
+  if (!Array.isArray(raw)) return fallback
+  const seen = []
+  for (const item of raw) {
+    if (typeof item === 'string' && /^[A-Za-z0-9._-]{1,32}$/.test(item) && !seen.includes(item)) {
+      seen.push(item)
+    }
+  }
+  return seen.length > 0 ? seen.slice(0, 8) : fallback
+}
+
+/**
+ * Pick the configured dist-tag channels out of a registry packument.
+ * Throws when the document is unusable; silently omits channels the registry
+ * doesn't publish (e.g. no "next" tag yet). Exported for offline self-testing.
+ */
+export function extractChannelVersions(doc, channels) {
+  if (doc === null || typeof doc !== 'object') throw new Error('registry 响应不是 JSON 对象')
+  const tags = doc['dist-tags']
+  if (tags === null || typeof tags !== 'object') throw new Error('registry 响应里没有 dist-tags 字段')
+  const versions = {}
+  for (const tag of channels) {
+    const value = tags[tag]
+    if (typeof value === 'string' && value.trim() !== '') versions[tag] = value.trim()
+  }
+  if (Object.keys(versions).length === 0) {
+    throw new Error('registry 的 dist-tags 里没有这些通道：' + channels.join(', '))
+  }
+  return versions
 }
 
 /**
@@ -222,24 +266,22 @@ function tail(lines, count) {
 function apply(ctx, rawConfig) {
   const entry = rawConfig && typeof rawConfig === 'object' ? rawConfig : {}
   const registry = resolveRegistry(entry)
+  const channels = normalizeChannels(entry.channels)
 
-  // ---- latest-version cache ------------------------------------------------
-  let latestState = null // { version } | { error } | null
+  // ---- channel-version cache -----------------------------------------------
+  let latestState = null // { versions: {tag: version} } | { error } | null
   let latestInFlight = null
 
-  const fetchLatest = async () => {
+  const fetchChannels = async () => {
     if (typeof fetch !== 'function') throw new Error('此 Node 运行时没有全局 fetch（需要 Node 18+）')
-    const url = registry.replace(/\/+$/, '') + '/' + PKG + '/latest'
+    const url = registry.replace(/\/+$/, '') + '/' + PKG
     const res = await fetch(url, {
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/vnd.npm.install-v1+json, application/json' },
       signal: AbortSignal.timeout(LATEST_TIMEOUT_MS),
     })
     if (!res.ok) throw new Error('registry 返回 HTTP ' + res.status)
     const doc = await res.json()
-    if (doc === null || typeof doc !== 'object' || typeof doc.version !== 'string' || doc.version === '') {
-      throw new Error('registry 响应里没有 version 字段')
-    }
-    return doc.version
+    return extractChannelVersions(doc, channels)
   }
 
   const refreshLatest = (force) => {
@@ -250,8 +292,8 @@ function apply(ctx, rawConfig) {
     if (latestInFlight !== null) return latestInFlight
     latestInFlight = (async () => {
       try {
-        const version = await fetchLatest()
-        latestState = { version, checkedAt: Date.now() }
+        const versions = await fetchChannels()
+        latestState = { versions, checkedAt: Date.now() }
       } catch (error) {
         latestState = { error: String(error && error.message ? error.message : error), checkedAt: Date.now() }
       } finally {
@@ -265,9 +307,14 @@ function apply(ctx, rawConfig) {
   // ---- upgrade state machine ----------------------------------------------
   let upgradeState = null // { active, startedAt, finishedAt, exitCode, ok, cmd, dryRun, log[] }
 
-  const startUpgrade = (dryRun) => {
+  const startUpgrade = (dryRun, channel) => {
     if (upgradeState !== null && upgradeState.active) return { conflict: true }
-    const args = dryRun === true ? ['--version'] : ['install', '-g', PKG + '@latest', '--no-fund', '--no-audit']
+    // channel is whitelisted against the configured dist-tags before it ever
+    // reaches a command line (the Windows spawn goes through a shell).
+    const target = dryRun === true
+      ? null
+      : (typeof channel === 'string' && channels.includes(channel) ? channel : channels[0])
+    const args = dryRun === true ? ['--version'] : ['install', '-g', PKG + '@' + target, '--no-fund', '--no-audit']
     const state = {
       active: true,
       startedAt: Date.now(),
@@ -276,6 +323,7 @@ function apply(ctx, rawConfig) {
       ok: null,
       cmd: 'npm ' + args.join(' '),
       dryRun: dryRun === true,
+      channel: target,
       log: [],
     }
     let child
@@ -343,14 +391,25 @@ function apply(ctx, rawConfig) {
       finishedAt: upgradeState.finishedAt,
       cmd: upgradeState.cmd,
       dryRun: upgradeState.dryRun,
+      channel: upgradeState.channel,
       log: tail(upgradeState.log, VIEW_LOG_LIMIT),
     }
   }
 
   const statusView = (req) => {
     const install = readInstall()
-    const latest = latestState && latestState.version !== undefined ? latestState.version : null
-    const cmp = install.version !== null && latest !== null ? compareVersions(install.version, latest) : null
+    const versions = latestState !== null && latestState.versions ? latestState.versions : {}
+    const channelsView = channels.map((tag) => {
+      const version = typeof versions[tag] === 'string' ? versions[tag] : null
+      const cmp = install.version !== null && version !== null ? compareVersions(install.version, version) : null
+      return { tag, version, newer: cmp === null ? null : cmp < 0 }
+    })
+    const comparable = channelsView.filter((c) => c.newer !== null)
+    const hasNewer = comparable.length === 0 ? null : comparable.some((c) => c.newer === true)
+    const upToDate = comparable.length === 0 ? null : comparable.every((c) => c.newer === false)
+    const latest = typeof versions.latest === 'string'
+      ? versions.latest
+      : (channelsView.length > 0 ? channelsView[0].version : null)
     const viewerIp = req ? normalizeIp(req.socket?.remoteAddress) : null
     return {
       viewerIp,
@@ -360,10 +419,11 @@ function apply(ctx, rawConfig) {
       installPath: install.path,
       node: process.versions.node,
       latest,
+      channels: channelsView,
       latestCheckedAt: latestState !== null ? latestState.checkedAt : null,
       latestError: latestState !== null && latestState.error !== undefined ? latestState.error : null,
-      upToDate: cmp === null ? null : cmp >= 0,
-      hasNewer: cmp === null ? null : cmp < 0,
+      upToDate,
+      hasNewer,
       registry,
       upgrade: upgradeView(),
     }
@@ -413,7 +473,12 @@ function apply(ctx, rawConfig) {
           }
           const body = await readJsonBody(req)
           const dryRun = body !== null && body.dryRun === true
-          const started = startUpgrade(dryRun)
+          const channel = body !== null && typeof body.channel === 'string' ? body.channel : undefined
+          if (dryRun !== true && channel !== undefined && !channels.includes(channel)) {
+            sendJson(res, 400, { ok: false, error: '未知升级通道：' + channel })
+            return
+          }
+          const started = startUpgrade(dryRun, channel)
           if (started.conflict) {
             sendJson(res, 409, { ok: false, error: '升级正在进行中', upgrade: upgradeView() })
             return

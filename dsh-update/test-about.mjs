@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { apply, inject, name, compareVersions, parseSemver, parseNpmrcRegistry, resolveRegistry, normalizeIp, isLoopbackIp, readInstall } from './lib/index.js'
+import { apply, inject, name, compareVersions, parseSemver, parseNpmrcRegistry, resolveRegistry, normalizeIp, isLoopbackIp, readInstall, normalizeChannels, extractChannelVersions } from './lib/index.js'
 
 let passed = 0
 const ok = (label) => { passed++; console.log('  ✓ ' + label) }
@@ -34,6 +34,28 @@ assert.equal(resolveRegistry({ registry: 'https://cfg.example/' }, {}), 'https:/
 assert.equal(resolveRegistry({}, { npm_config_registry: 'https://env.example/' }), 'https://env.example/')
 assert.equal(resolveRegistry({}, {}), 'https://registry.npmjs.org/')
 ok('parseNpmrcRegistry / resolveRegistry precedence')
+
+// --- dist-tag channels ---------------------------------------------------------
+assert.deepEqual(normalizeChannels(undefined), ['latest', 'next'])
+assert.deepEqual(normalizeChannels(['beta', 'latest', 'beta', 'not valid!', 42]), ['beta', 'latest'])
+assert.deepEqual(normalizeChannels(['???']), ['latest', 'next'], 'nothing valid -> fallback')
+assert.equal(normalizeChannels(['a','b','c','d','e','f','g','h','i']).length, 8, 'cap at 8 channels')
+ok('normalizeChannels')
+
+const packument = {
+  name: '@deepseek-ai/dsh',
+  'dist-tags': { latest: '0.1.0-rc.7', next: '0.2.0-next.5', beta: '0.0.9-beta.1' },
+}
+assert.deepEqual(extractChannelVersions(packument, ['latest', 'next']), { latest: '0.1.0-rc.7', next: '0.2.0-next.5' })
+assert.deepEqual(extractChannelVersions(packument, ['latest']), { latest: '0.1.0-rc.7' })
+assert.deepEqual(
+  extractChannelVersions({ 'dist-tags': { latest: '1.0.0' } }, ['latest', 'next']),
+  { latest: '1.0.0' },
+  'unpublished next tolerated',
+)
+assert.throws(() => extractChannelVersions({}, ['latest']), /dist-tags/)
+assert.throws(() => extractChannelVersions({ 'dist-tags': {} }, ['latest']), /通道/)
+ok('extractChannelVersions picks latest + next out of dist-tags')
 
 // --- ip helpers ---------------------------------------------------------------
 assert.equal(normalizeIp('::ffff:192.0.2.5'), '192.0.2.5')
@@ -107,6 +129,13 @@ if (first.body.latestError === null) {
   console.log('  (latest fetch failed in this environment: ' + first.body.latestError + ')')
 }
 ok('GET /api/about/status returns current+latest (current=' + first.body.current + ', latest=' + first.body.latest + ')')
+assert.ok(Array.isArray(first.body.channels) && first.body.channels.length >= 1, 'status lists channels')
+for (const c of first.body.channels) {
+  assert.match(c.tag, /^[A-Za-z0-9._-]+$/, 'channel tag well-formed')
+  assert.ok(c.version === null || /^\d+\.\d+/.test(c.version), 'channel version null or semver')
+  assert.ok(c.newer === null || typeof c.newer === 'boolean', 'channel newer flag')
+}
+ok('GET status lists dist-tag channels: ' + JSON.stringify(first.body.channels))
 
 // non-loopback status also allowed (info only)
 const lan = await call('/api/about/status', getReq('::ffff:192.0.2.10'))
@@ -137,6 +166,11 @@ const postReqEE = (ip, body) => {
 const denied = await call('/api/about/upgrade', postReqEE('::ffff:192.0.2.10', {}))
 assert.equal(denied.status, 403)
 ok('POST upgrade from non-loopback -> 403')
+
+// --- channel guard ------------------------------------------------------------------
+const badChan = await call('/api/about/upgrade', postReqEE('127.0.0.1', { channel: 'not a tag; rm -rf' }))
+assert.equal(badChan.status, 400)
+ok('POST upgrade with an unknown channel -> 400 (never reaches npm)')
 
 // --- dry-run upgrade exercises the whole spawn/log/state machine ----------------
 const started = await call('/api/about/upgrade', postReqEE('127.0.0.1', { dryRun: true }))

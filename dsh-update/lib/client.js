@@ -1,9 +1,11 @@
 // dsh-plugin-about — Client half.
 //
 // Registers a "关于" section in the DSH settings panel:
-//   * 当前版本 / 最新发布版本 (from the plugin's own /api/about/status route)
-//   * 已是最新 / 有新版本 badge, manual re-check button
+//   * 当前版本 + 每个 npm 发布通道一张卡片（latest / next 等 dist-tag）
+//     (from the plugin's own /api/about/status route)
+//   * 已是最新 / 有新版本 badge（任一通道有更新即提示）, manual re-check button
 //   * 一键升级 button -> POST /api/about/upgrade (server-side npm install -g),
+//     plus per-channel buttons (e.g. upgrade into @next),
 //     with a live log tail while the upgrade runs.
 //
 // Version info is visible from every origin; the upgrade action is loopback
@@ -76,6 +78,27 @@ window.__ModuleLoader__.load({
       return typeof v === 'string' && v !== '' ? v : '…';
     }
 
+    function tagLabel(tag) {
+      if (tag === 'latest') return '最新发布版本';
+      if (tag === 'next') return 'Next 预览版';
+      return '通道 ' + tag;
+    }
+
+    function channelList(state) {
+      if (state && Array.isArray(state.channels) && state.channels.length > 0) return state.channels;
+      // old-host fallback: synthesize the single latest channel
+      var v = state && typeof state.latest === 'string' ? state.latest : null;
+      return v ? [{ tag: 'latest', version: v, newer: state.hasNewer }] : [];
+    }
+
+    function findChannelVersion(state, tag) {
+      var list = channelList(state);
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].tag === tag && typeof list[i].version === 'string') return list[i].version;
+      }
+      return null;
+    }
+
     // ------------------------------------------------------------------
     // panel
     // ------------------------------------------------------------------
@@ -127,17 +150,20 @@ window.__ModuleLoader__.load({
       var upgrade = state ? state.upgrade : null;
       var current = state ? state.current : null;
       var latest = state ? state.latest : null;
+      var channels = state ? channelList(state) : [];
+      var primary = channels.length > 0 ? channels[0] : null;
+      var newerTags = channels.filter(function (c) { return c.newer === true; }).map(function (c) { return c.tag; });
       var upToDate = state ? state.upToDate : null;
       var hasNewer = state ? state.hasNewer : null;
       var loopback = state ? state.loopback !== false : true;
       var upgrading = upgrade !== null && upgrade.active === true;
 
-      var startUpgrade = function () {
+      var startUpgrade = function (channel) {
         setStarting(true);
         fetch(UPGRADE_URL, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: '{}',
+          body: JSON.stringify(channel ? { channel: channel } : {}),
         })
           .then(function (r) {
             return r.json().then(function (d) { return { status: r.status, body: d }; });
@@ -161,10 +187,11 @@ window.__ModuleLoader__.load({
         upgradeStatusNode = el('div', { className: 'dsh-about-status' },
           '正在升级…（npm install -g，可能需要 1-2 分钟，此期间请勿关闭页面）');
       } else if (upgrade !== null && upgrade.ok === true) {
+        var doneVersion = upgrade.channel ? (findChannelVersion(state, upgrade.channel) || latest) : latest;
         upgradeStatusNode = el('div', { className: 'dsh-about-status ok' },
           upgrade.dryRun === true
             ? '自检完成：npm 命令执行成功（dryRun）。'
-            : '升级完成 ✓ 已安装 ' + (latest || '') + '，重启 dsh 后生效（关闭当前 dsh web，再运行 dsh web）。');
+            : '升级完成 ✓ 已安装 ' + (doneVersion || '') + '，重启 dsh 后生效（关闭当前 dsh web，再运行 dsh web）。');
       } else if (upgrade !== null && upgrade.ok === false) {
         upgradeStatusNode = el('div', { className: 'dsh-about-status err' },
           '升级失败（' + (upgrade.exitCode === null ? '无法启动' : '退出码 ' + upgrade.exitCode) + '），详见下方日志。');
@@ -179,7 +206,8 @@ window.__ModuleLoader__.load({
       if (upToDate === true) {
         badgeNode = el('span', { className: 'dsh-about-badge ok' }, el('span', { className: 'dsh-about-dot' }), '已是最新版本');
       } else if (hasNewer === true) {
-        badgeNode = el('span', { className: 'dsh-about-badge new' }, el('span', { className: 'dsh-about-dot' }), '有新版本可用');
+        badgeNode = el('span', { className: 'dsh-about-badge new' }, el('span', { className: 'dsh-about-dot' }),
+          '有新版本可用' + (newerTags.length > 0 ? '（' + newerTags.join(' / ') + '）' : ''));
       }
 
       return el('div', { className: 'dsh-about' },
@@ -189,14 +217,16 @@ window.__ModuleLoader__.load({
             el('span', { className: 'dsh-about-v' }, versionText(current)),
             upToDate === true || hasNewer === true ? badgeNode : null,
           ),
-          el('div', { className: 'dsh-about-card' },
-            el('span', { className: 'dsh-about-k' }, '最新发布版本'),
-            el('span', { className: 'dsh-about-v' }, state && state.latestError ? '获取失败' : versionText(latest)),
-            el('span', { className: 'dsh-about-muted' },
-              state && state.latestError
-                ? state.latestError
-                : state && state.latestCheckedAt ? '检查于 ' + formatTime(state.latestCheckedAt) : ''),
-          ),
+          channels.map(function (c) {
+            return el('div', { className: 'dsh-about-card', key: c.tag },
+              el('span', { className: 'dsh-about-k' }, tagLabel(c.tag)),
+              el('span', { className: 'dsh-about-v' }, state && state.latestError ? '获取失败' : versionText(c.version)),
+              el('span', { className: 'dsh-about-muted' },
+                state && state.latestError
+                  ? state.latestError
+                  : state && state.latestCheckedAt ? '检查于 ' + formatTime(state.latestCheckedAt) : ''),
+            );
+          }),
         ),
         state && state.latestError
           ? el('div', { className: 'dsh-about-status err' }, '获取最新版本失败：' + state.latestError)
@@ -211,9 +241,19 @@ window.__ModuleLoader__.load({
           el('button', {
             type: 'button',
             className: 'dsh-about-btn primary',
-            onClick: startUpgrade,
-            disabled: upgrading || starting || latest === null || latest === undefined,
-          }, starting ? '启动中…' : upgrading ? '升级中…' : latest ? '一键升级到 ' + latest : '升级'),
+            onClick: function () { startUpgrade(primary ? primary.tag : undefined); },
+            disabled: upgrading || starting || primary === null || !primary.version,
+          }, starting ? '启动中…' : upgrading ? '升级中…' : primary && primary.version ? '一键升级到 ' + primary.version : '升级'),
+          channels.slice(1).map(function (c) {
+            if (!c.version) return null;
+            return el('button', {
+              type: 'button',
+              className: 'dsh-about-btn',
+              key: c.tag,
+              onClick: function () { startUpgrade(c.tag); },
+              disabled: upgrading || starting,
+            }, '升级到 ' + c.tag + ' ' + c.version);
+          }),
           upToDate === true && !upgrading
             ? el('span', { className: 'dsh-about-muted' }, '当前已是最新版本，也可点此重新安装。')
             : null,
@@ -228,7 +268,11 @@ window.__ModuleLoader__.load({
           state && state.installPath ? el('div', null, '安装位置：', el('b', null, state.installPath)) : null,
           state && state.node ? el('div', null, 'Node 版本：', el('b', null, state.node)) : null,
           state && state.registry ? el('div', null, 'Registry：', el('b', null, state.registry)) : null,
-          el('div', null, '升级命令：', el('b', null, 'npm install -g @deepseek-ai/dsh@latest')),
+          el('div', null, '升级命令：', el('b', null,
+            'npm install -g @deepseek-ai/dsh@' + (primary ? primary.tag : 'latest')
+            + (channels.length > 1
+              ? '（另有 @' + channels.slice(1).map(function (c) { return c.tag; }).join('、@') + '）'
+              : ''))),
         ),
         el('div', { className: 'dsh-about-muted' },
           '升级在后台执行 npm install -g，完成后需重启 dsh 才会生效；升级过程中当前会话不受影响。',

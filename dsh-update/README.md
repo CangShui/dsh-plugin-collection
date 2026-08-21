@@ -1,16 +1,20 @@
 # dsh-update
 
 DSH（DeepSeek Harness）Web 界面的「关于」插件：在设置面板新增 **「关于」** 区块，
-显示**当前安装版本**与 **npm 最新发布版本**，并提供**一键升级**按钮
-（宿主端执行 `npm install -g @deepseek-ai/dsh@latest`）。
+显示**当前安装版本**与 npm 各发布通道（`latest` / `next` 等 dist-tag）的最新版本，
+并提供**一键升级**按钮（宿主端执行 `npm install -g @deepseek-ai/dsh@<通道>`）。
 
 ## 功能
 
 - 设置页新增「关于」区块（`settings.section` 插槽，排在最后）：
-  - 当前版本 / 最新发布版本卡片，附「已是最新版本 / 有新版本可用」徽标
-    （prerelease 感知的 semver 比较，`0.1.0-rc.10 > 0.1.0-rc.9`）；
+  - 当前版本卡片 + 每个发布通道一张卡片：直接读 npm packument 的 `dist-tags`，
+    默认检测 `latest` 与 `next`——官方发 `dsh@next` 这类预发布也能看到；
+    某通道尚未发布时自动隐藏，附「已是最新版本 / 有新版本可用」徽标
+    （prerelease 感知的 semver 比较，`0.1.0-rc.10 > 0.1.0-rc.9`，
+    任一通道有更新即提示）；
   - 「重新检查」按钮（registry 结果默认缓存 5 分钟，可强制刷新）；
-  - 「一键升级到 <版本>」按钮：宿主端后台执行 npm 安装，面板实时滚动 npm 输出日志；
+  - 「一键升级到 <latest 版本>」按钮 + 各附加通道按钮（如「升级到 next <版本>」）：
+    宿主端后台执行 npm 安装，面板实时滚动 npm 输出日志；
   - 安装位置 / Node 版本 / Registry 等信息。
 - 升级完成后提示**重启 dsh 生效**；升级过程不影响运行中的会话。
   npm 结束时的 `EPERM … .dsh-xxxx` 清理警告可忽略（运行中的旧进程锁定文件所致），
@@ -78,14 +82,15 @@ dsh plugin --profile web update dsh-plugin-about
 
 | 路由 | 说明 |
 | --- | --- |
-| `GET /api/about/status?refresh=1` | 当前版本 + 最新版本 + 升级状态（`refresh=1` 强制重新检查） |
-| `POST /api/about/upgrade` | 启动升级；请求体 `{"dryRun":true}` 只跑 `npm --version` 自检，不改动安装 |
+| `GET /api/about/status?refresh=1` | 当前版本 + 各通道最新版本（`channels[]`，含 `tag/version/newer`）+ 升级状态（`refresh=1` 强制重新检查） |
+| `POST /api/about/upgrade` | 启动升级；请求体 `{"channel":"next"}` 指定通道（默认 `latest`），`{"dryRun":true}` 只跑 `npm --version` 自检，不改动安装 |
 
 ## 配置（insert 行的 config，均可选）
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `registry` | npm 自身配置（`npm_config_registry` → `~/.npmrc` → npmjs 官方源） | 查询/升级用的 registry 基地址 |
+| `channels` | `["latest", "next"]` | 检测/可升级的 npm dist-tag 通道列表（最多 8 个，非法项自动剔除） |
 
 ```yaml
 - insert:
@@ -93,6 +98,7 @@ dsh plugin --profile web update dsh-plugin-about
       name: 'dsh-plugin-about'
       config:
         registry: 'https://registry.npmmirror.com'
+        channels: ['latest', 'next']
 ```
 
 ## 文件结构
