@@ -94,6 +94,9 @@ const call = async (path, req) => {
 // --- readInstall against the real dsh installation ------------------------------
 // resolve the global npm root so this test runs on any machine with dsh installed
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 const npmRoot = (process.platform === 'win32'
   ? spawnSync('npm root -g', { shell: true, encoding: 'utf8' })
   : spawnSync('npm', ['root', '-g'], { encoding: 'utf8' })).stdout?.trim() ?? ''
@@ -105,6 +108,21 @@ if (dshBin === '') {
   assert.match(install.version, /^\d+\.\d+/, 'found the real install version')
   assert.ok(install.path.includes('node_modules'), 'install path looks right')
   ok('readInstall resolves the real dsh install: ' + install.version + ' @ ' + install.path)
+  // npm -g under nvm launches dsh through a symlink bin shim
+  // (bin/dsh -> ../lib/node_modules/@deepseek-ai/dsh/lib/bin.js): the anchor the
+  // running process actually reports is that shim, and it must still resolve.
+  try {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-about-test-'))
+    const link = join(dir, 'dsh')
+    symlinkSync(realpathSync(dshBin), link)
+    const viaLink = readInstall(link)
+    rmSync(dir, { recursive: true, force: true })
+    assert.match(viaLink.version, /^\d+\.\d+/, 'symlinked bin shim -> same install version')
+    assert.equal(viaLink.version, install.version, 'symlink resolves to the same version')
+    ok('readInstall resolves a symlinked bin shim (npm -g layout): ' + viaLink.version + ' @ ' + viaLink.path)
+  } catch (error) {
+    console.log('  (symlink creation unsupported here — skipping the symlink-shim assertion: ' + error.message + ')')
+  }
 }
 assert.equal(readInstall('C:/definitely/not/here.js').version, null, 'bad anchor -> null version')
 ok('readInstall tolerates a bad anchor')

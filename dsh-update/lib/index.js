@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -176,6 +176,18 @@ export function extractChannelVersions(doc, channels) {
  * @param anchorPath - a path inside the dsh install (default process.argv[1]).
  */
 export function readInstall(anchorPath = process.argv[1]) {
+  // npm -g installs under nvm launch dsh through a symlink bin shim
+  // (bin/dsh -> ../lib/node_modules/@deepseek-ai/dsh/lib/bin.js): resolving the
+  // anchor to its real file first lets both strategies below run against the
+  // install tree instead of the shim's bin/ directory.
+  if (typeof anchorPath === 'string' && anchorPath !== '') {
+    try {
+      anchorPath = realpathSync(anchorPath)
+    } catch (_e) {
+      // not a real file on disk (e.g. `node -e`): keep the raw anchor; the
+      // strategies below then fail gracefully exactly as before.
+    }
+  }
   // 1) resolve '@deepseek-ai/dsh/package.json' against the running bin (bin.js).
   try {
     if (typeof anchorPath === 'string' && anchorPath !== '') {

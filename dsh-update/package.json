@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-about",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "DSH 关于面板：设置页新增「关于」区块，显示当前版本与 npm 最新发布版本，附一键升级按钮（宿主端执行 npm install -g）。",
   "type": "module",
   "main": "lib/index.js",
