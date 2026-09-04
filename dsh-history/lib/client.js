@@ -161,6 +161,27 @@ window.__ModuleLoader__.load({
       });
     }
 
+    /** Stop glyph: a filled rounded square (matches the stop-control convention). */
+    function IconStop(props) {
+      var size = props.size || 13;
+      return jsxRuntime.jsx('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        xmlns: 'http://www.w3.org/2000/svg',
+        className: props.className,
+        children: jsxRuntime.jsx('rect', {
+          x: '4',
+          y: '4',
+          width: '8',
+          height: '8',
+          rx: '1.6',
+          fill: 'currentColor',
+        }),
+      });
+    }
+
     // ------------------------------------------------------------------
     // styles (strictly DSH-unified color tokens & aesthetics)
     // ------------------------------------------------------------------
@@ -190,6 +211,12 @@ window.__ModuleLoader__.load({
         '.dsh-ph-load-all-btn:disabled{opacity:0.65;cursor:default;color:var(--dsw-alias-label-tertiary);border-color:var(--dsw-alias-border-l1);background:transparent}',
         '.dsh-ph-btn-icon{display:inline-flex;align-items:center;color:var(--dsw-alias-state-business-primary, currentColor)}',
         '.dsh-ph-load-all-btn:disabled .dsh-ph-btn-icon{color:var(--dsw-alias-label-tertiary)}',
+        '',
+        '/* Stop Button (high-contrast danger affordance, only shown while paging) */',
+        '.dsh-ph-stop-btn{border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 45%, var(--dsw-alias-border-l2));background:color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 10%, var(--dsw-alias-bg-layer-1));border-radius:8px;height:30px;padding:0 10px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--dsw-alias-state-error-primary, #e5484d);width:100%;transition:background .15s, border-color .15s}',
+        '.dsh-ph-stop-btn:hover{background:color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 18%, var(--dsw-alias-bg-layer-1));border-color:var(--dsw-alias-state-error-primary, #e5484d)}',
+        '.dsh-ph-stop-btn:active{background:color-mix(in srgb, var(--dsw-alias-state-error-primary, #e5484d) 26%, var(--dsw-alias-bg-layer-1))}',
+        '.dsh-ph-stop-btn .dsh-ph-btn-icon{color:var(--dsw-alias-state-error-primary, #e5484d)}',
         '',
         '/* Search */',
         '.dsh-ph-search-wrap{position:relative;display:flex;align-items:center;width:100%}',
@@ -546,6 +573,25 @@ window.__ModuleLoader__.load({
       var [pageCount, setPageCount] = useState(0);
       var [note, setNote] = useState(null);
 
+      // Refs for cooperative cancellation of the sequential paging loop
+      var stopRef = react.useRef(false);
+      var pagingCounterRef = react.useRef(0);
+      var pagerRef = react.useRef(null);
+      var noteTimerRef = react.useRef(null);
+
+      /** Show a transient notice that self-clears, so the idle hint can return. */
+      var flashNote = useCallback(function (text) {
+        if (noteTimerRef.current !== null) {
+          clearTimeout(noteTimerRef.current);
+          noteTimerRef.current = null;
+        }
+        setNote(text);
+        noteTimerRef.current = setTimeout(function () {
+          noteTimerRef.current = null;
+          setNote(null);
+        }, 4000);
+      }, []);
+
       var toggleCollapse = useCallback(function () {
         setCollapsed(function (prev) {
           var next = !prev;
@@ -573,7 +619,7 @@ window.__ModuleLoader__.load({
         return p.text.toLowerCase().indexOf(search.toLowerCase()) !== -1;
       });
 
-      // Sequential Load All
+      // Sequential Load All (cooperatively stoppable)
       var loadAll = useCallback(function () {
         var pager = getPager(sessions, sessionId);
         if (!pager) {
@@ -581,15 +627,28 @@ window.__ModuleLoader__.load({
           return;
         }
         if (paging) return;
+
+        var runId = ++pagingCounterRef.current;
+        var isCurrent = function () { return runId === pagingCounterRef.current; };
+
+        pagerRef.current = pager;
+        stopRef.current = false;
         setPaging(true);
         setNote(null);
         var pages = 0;
         var maxPages = 400;
 
         function runNext() {
+          // Stale run (superseded by a newer run, or stopped): never issue another page fetch.
+          if (!isCurrent() || stopRef.current) {
+            setPaging(false);
+            pagerRef.current = null;
+            return;
+          }
           var snap = pager.snapshot();
           if (!snap || snap.openState !== 'open' || !snap.hasMore || pages >= maxPages) {
             setPaging(false);
+            pagerRef.current = null;
             return;
           }
           pages++;
@@ -599,19 +658,59 @@ window.__ModuleLoader__.load({
               return waitPaging(pager, 15000);
             })
             .then(function (res) {
+              // A stop request wins over any in-flight continuation; the in-flight
+              // page already issued cannot be revoked, but no further page starts.
+              if (!isCurrent() || stopRef.current) {
+                setPaging(false);
+                pagerRef.current = null;
+                return;
+              }
               if (res === 'done' || res === 'timeout') {
                 setPaging(false);
+                pagerRef.current = null;
               } else {
                 runNext();
               }
             })
             .catch(function () {
               setPaging(false);
-              setNote('加载过程中断');
+              pagerRef.current = null;
+              if (isCurrent()) setNote('加载过程中断');
             });
         }
         runNext();
       }, [sessions, sessionId, paging]);
+
+      // Stop the sequential Load All: no further pages are requested; the
+      // in-flight page settles on its own and the button returns to idle.
+      var stopLoad = useCallback(function () {
+        if (!paging) return;
+        pagingCounterRef.current++; // invalidate any in-flight continuation
+        stopRef.current = true;
+        pagerRef.current = null;
+        setPaging(false);
+        flashNote('已停止加载（已加载部分保留）');
+      }, [paging, flashNote]);
+
+      // Reset the stop flag when the Session changes so a fresh session starts clean.
+      useEffect(function () {
+        pagingCounterRef.current++;
+        stopRef.current = false;
+        pagerRef.current = null;
+        setPaging(false);
+        setPageCount(0);
+        setNote(null);
+      }, [sessionId]);
+
+      // Clear the transient notice timer on unmount.
+      useEffect(function () {
+        return function () {
+          if (noteTimerRef.current !== null) {
+            clearTimeout(noteTimerRef.current);
+            noteTimerRef.current = null;
+          }
+        };
+      }, []);
 
       // Jump to a specific prompt
       var handleJump = useCallback(function (p, userIdx) {
@@ -726,6 +825,21 @@ window.__ModuleLoader__.load({
                     }),
                   ],
                 }),
+                paging
+                  ? jsxRuntime.jsxs('button', {
+                      type: 'button',
+                      className: 'dsh-ph-stop-btn',
+                      title: '停止加载（保留已加载部分）',
+                      onClick: stopLoad,
+                      children: [
+                        jsxRuntime.jsx('span', {
+                          className: 'dsh-ph-btn-icon',
+                          children: jsxRuntime.jsx(IconStop, { size: 13 }),
+                        }),
+                        jsxRuntime.jsx('span', { children: '停止加载' }),
+                      ],
+                    })
+                  : null,
                 prompts.length > 4
                   ? jsxRuntime.jsxs('div', {
                       className: 'dsh-ph-search-wrap',
