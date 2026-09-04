@@ -1,4 +1,5 @@
 # dsh-plugin-prompt-history
+<img width="537" height="842" alt="image" src="https://github.com/user-attachments/assets/ec54e357-e30b-4624-99ee-4b067a6ec94d" />
 
 DSH Web 对话大纲/目录插件。在对话记录右侧常驻悬浮一个符合 DSH 官方质感的文档大纲窗口，逐行列出本会话收到的全部提示词并标明时间，点击即可平滑跳转到对应消息并高亮；面板顶部带有「加载全部」按钮，一键把更早的旧上下文全部载入。
 
