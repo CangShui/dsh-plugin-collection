@@ -255,41 +255,166 @@ window.__ModuleLoader__.load({
       return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
     }
 
-    /** Flatten ContentBlock[] to preview text. */
+    /** Flatten ContentBlock[] or string to preview text. */
     function textOfContent(content) {
+      if (!content) return '';
+      if (typeof content === 'string') return content.replace(/\s+/g, ' ').trim();
+      if (typeof content === 'object' && !Array.isArray(content)) {
+        if (typeof content.text === 'string') return content.text.replace(/\s+/g, ' ').trim();
+      }
       var parts = [];
-      var blocks = content || [];
+      var blocks = Array.isArray(content) ? content : [content];
       for (var i = 0; i < blocks.length; i++) {
         var b = blocks[i];
-        if (b && typeof b === 'object') {
+        if (!b) continue;
+        if (typeof b === 'string') {
+          parts.push(b);
+        } else if (typeof b === 'object') {
           if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
           else if (b.type === 'image') parts.push('[图片]');
+          else if (typeof b.text === 'string') parts.push(b.text);
         }
       }
       return parts.join(' ').replace(/\s+/g, ' ').trim();
     }
 
-    /** Collect user prompts from conversation snapshot. */
-    function collectPrompts(snapshot) {
+    /** Collect user prompts from conversation and session snapshots (robust across DSH versions). */
+    function collectPrompts(conversation, session) {
       var out = [];
-      if (!snapshot) return { prompts: out, hasMore: false };
-      var nodes = snapshot.nodes || [];
-      for (var i = 0; i < nodes.length; i++) {
-        var n = nodes[i];
-        if (!n) continue;
-        if (n.kind !== 'user' && n.kind !== 'steering') continue;
-        var text = textOfContent(n.content);
-        out.push({
-          seq: n.seq,
-          time: n.time,
-          kind: n.kind,
-          text: text,
-        });
+      var hasMore = session ? session.hasMore === true : false;
+
+      // Strategy 1: Modern DSH — conversation.views.get('chat')
+      var chat = null;
+      if (conversation && conversation.views && typeof conversation.views.get === 'function') {
+        try {
+          chat = conversation.views.get('chat');
+        } catch (_e) {}
+      } else if (conversation && conversation.chat) {
+        chat = conversation.chat;
+      } else if (session && session.chat) {
+        chat = session.chat;
       }
-      out.sort(function (a, b) {
+
+      if (chat) {
+        // 1a. Iterate chat.order and chat.nodes (exact nodes with DOM keys)
+        if (chat.order && chat.nodes && typeof chat.nodes.get === 'function') {
+          for (var i = 0; i < chat.order.length; i++) {
+            var key = chat.order[i];
+            var node = chat.nodes.get(key);
+            if (!node) continue;
+            var kind = node.kind;
+            if (kind === 'user' || kind === 'steering' || kind === 'command') {
+              var data = node.data || {};
+              var text = '';
+              if (kind === 'command') {
+                text = data.line || data.raw || (data.command ? '/' + data.command : '[指令]');
+              } else {
+                text = textOfContent(data.content || node.content);
+              }
+              var seqVal = data.seq != null ? data.seq : (node.anchorSeq != null ? node.anchorSeq : (node.seq != null ? node.seq : i));
+              out.push({
+                key: node.key || key,
+                seq: seqVal,
+                time: data.time || node.time || 0,
+                kind: kind,
+                text: text,
+              });
+            }
+          }
+        }
+
+        // 1b. Fallback: chat.legacy.nodes if order/nodes gave nothing
+        if (out.length === 0 && chat.legacy && Array.isArray(chat.legacy.nodes)) {
+          for (var j = 0; j < chat.legacy.nodes.length; j++) {
+            var ln = chat.legacy.nodes[j];
+            if (!ln) continue;
+            if (ln.kind === 'user' || ln.kind === 'steering' || ln.kind === 'command') {
+              var lnText = ln.kind === 'command'
+                ? (ln.line || ln.raw || (ln.command ? '/' + ln.command : '[指令]'))
+                : textOfContent(ln.content);
+              out.push({
+                key: ln.key || null,
+                seq: ln.seq != null ? ln.seq : j,
+                time: ln.time || 0,
+                kind: ln.kind,
+                text: lnText,
+              });
+            }
+          }
+        }
+
+        // 1c. Fallback: chat.navigation.items()
+        if (out.length === 0 && chat.navigation && typeof chat.navigation.items === 'function') {
+          try {
+            var navItems = chat.navigation.items();
+            if (Array.isArray(navItems)) {
+              for (var n = 0; n < navItems.length; n++) {
+                var ni = navItems[n];
+                if (ni && ni.prompt) {
+                  out.push({
+                    key: ni.anchorKey || null,
+                    seq: ni.turn != null ? ni.turn : n,
+                    time: 0,
+                    kind: 'user',
+                    text: String(ni.prompt).trim(),
+                  });
+                }
+              }
+            }
+          } catch (_e) {}
+        }
+      }
+
+      // Strategy 2: Fallback to conversation.nodes
+      if (out.length === 0 && conversation && Array.isArray(conversation.nodes)) {
+        for (var k = 0; k < conversation.nodes.length; k++) {
+          var cn = conversation.nodes[k];
+          if (!cn) continue;
+          if (cn.kind === 'user' || cn.kind === 'steering') {
+            out.push({
+              key: cn.key || null,
+              seq: cn.seq != null ? cn.seq : k,
+              time: cn.time || 0,
+              kind: cn.kind,
+              text: textOfContent(cn.content),
+            });
+          }
+        }
+      }
+
+      // Strategy 3: Fallback to session.nodes (legacy DSH architecture)
+      if (out.length === 0 && session && Array.isArray(session.nodes)) {
+        for (var m = 0; m < session.nodes.length; m++) {
+          var sn = session.nodes[m];
+          if (!sn) continue;
+          if (sn.kind === 'user' || sn.kind === 'steering') {
+            out.push({
+              key: sn.key || null,
+              seq: sn.seq != null ? sn.seq : m,
+              time: sn.time || 0,
+              kind: sn.kind,
+              text: textOfContent(sn.content),
+            });
+          }
+        }
+      }
+
+      // Deduplicate by key or seq
+      var seen = {};
+      var deduped = [];
+      for (var d = 0; d < out.length; d++) {
+        var item = out[d];
+        var uKey = item.key ? 'k:' + item.key : 's:' + item.seq;
+        if (seen[uKey]) continue;
+        seen[uKey] = true;
+        deduped.push(item);
+      }
+
+      deduped.sort(function (a, b) {
         return a.seq - b.seq;
       });
-      return { prompts: out, hasMore: snapshot.hasMore === true };
+
+      return { prompts: deduped, hasMore: hasMore };
     }
 
     // ------------------------------------------------------------------
@@ -300,21 +425,37 @@ window.__ModuleLoader__.load({
     var FLASH_CLASS = 'dsh-ph-flash';
 
     /** Find rendered DOM element for a given nodeKey or sequence index. */
-    function findTargetElement(nodeKey, userIndex) {
+    function findTargetElement(nodeKey, userIndex, seq) {
       if (typeof document === 'undefined') return null;
 
       // 1. Try matching by exact key
       if (nodeKey) {
-        var byKey = document.querySelector('[data-chat-flow-key="' + nodeKey + '"]') ||
-                    document.querySelector('[data-chat-anchor-key="' + nodeKey + '"]');
-        if (byKey) return byKey;
+        try {
+          var safeKey = String(nodeKey).replace(/["\\]/g, '\\$&');
+          var byKey = document.querySelector('[data-chat-flow-key="' + safeKey + '"]') ||
+                      document.querySelector('[data-chat-anchor-key="' + safeKey + '"]');
+          if (byKey) return byKey;
+        } catch (_e) {}
+
+        try {
+          var allFlow = document.querySelectorAll('[data-chat-flow-key]');
+          for (var i = 0; i < allFlow.length; i++) {
+            if (allFlow[i].getAttribute('data-chat-flow-key') === nodeKey) return allFlow[i];
+          }
+          var allAnchor = document.querySelectorAll('[data-chat-anchor-key]');
+          for (var j = 0; j < allAnchor.length; j++) {
+            if (allAnchor[j].getAttribute('data-chat-anchor-key') === nodeKey) return allAnchor[j];
+          }
+        } catch (_e) {}
       }
 
       // 2. Try matching user-kind elements by index
-      var userItems = document.querySelectorAll('[data-chat-flow-kind="user"], [data-chat-flow-kind="steering"]');
-      if (userIndex !== undefined && userIndex >= 0 && userIndex < userItems.length) {
-        return userItems[userIndex];
-      }
+      try {
+        var userItems = document.querySelectorAll('[data-chat-flow-kind="user"], [data-chat-flow-kind="steering"]');
+        if (userIndex !== undefined && userIndex >= 0 && userIndex < userItems.length) {
+          return userItems[userIndex];
+        }
+      } catch (_e) {}
 
       return null;
     }
@@ -354,6 +495,7 @@ window.__ModuleLoader__.load({
         return {
           snapshot: function () { return s.getSnapshot(); },
           loadOlder: function () { return s.loadOlder(); },
+          loadThrough: typeof s.loadThrough === 'function' ? function (seq) { return s.loadThrough(seq); } : null,
         };
       } catch (_e) {
         return null;
@@ -387,6 +529,7 @@ window.__ModuleLoader__.load({
 
       var sessionId = props.sessionId;
       var useSession = props.useSession;
+      var useConversation = props.useConversation;
       var sessions = props.sessions;
 
       // Persistence for minimized/expanded state
@@ -413,10 +556,14 @@ window.__ModuleLoader__.load({
         });
       }, []);
 
-      var snapshot = useSession(function (s) {
+      var session = typeof useSession === 'function' ? useSession(function (s) {
         return s;
-      });
-      var data = collectPrompts(snapshot);
+      }) : null;
+      var conversation = typeof useConversation === 'function' ? useConversation(function (c) {
+        return c;
+      }) : null;
+
+      var data = collectPrompts(conversation, session);
       var prompts = data.prompts;
       var hasMore = data.hasMore;
 
@@ -467,27 +614,37 @@ window.__ModuleLoader__.load({
       }, [sessions, sessionId, paging]);
 
       // Jump to a specific prompt
-      var handleJump = useCallback(function (seq, userIdx) {
+      var handleJump = useCallback(function (p, userIdx) {
+        var seq = p.seq;
+        var nodeKey = p.key;
         setActiveSeq(seq);
-        var nodeKey = null;
-        if (snapshot && snapshot.chat && snapshot.chat.order && snapshot.chat.nodes) {
-          var order = snapshot.chat.order;
-          var store = snapshot.chat.nodes;
-          for (var i = 0; i < order.length; i++) {
-            var n = store.get(order[i]);
-            if (n && n.data && n.data.seq === seq) {
-              nodeKey = n.key;
-              break;
-            }
-          }
-        }
-        var el = findTargetElement(nodeKey, userIdx);
+
+        var el = findTargetElement(nodeKey, userIdx, seq);
         if (el) {
           scrollToAndHighlight(el);
+          setNote(null);
         } else {
-          setNote('该条输入尚未载入到可视区域，请先「加载全部」');
+          var pager = getPager(sessions, sessionId);
+          if (pager && typeof pager.loadThrough === 'function' && seq != null) {
+            setNote('正在拉取该条历史…');
+            pager.loadThrough(seq).then(function () {
+              setTimeout(function () {
+                var retryEl = findTargetElement(nodeKey, userIdx, seq);
+                if (retryEl) {
+                  scrollToAndHighlight(retryEl);
+                  setNote(null);
+                } else {
+                  setNote('该条输入尚未载入到可视区域，请先「加载全部」');
+                }
+              }, 120);
+            }).catch(function () {
+              setNote('该条输入尚未载入到可视区域，请先「加载全部」');
+            });
+          } else {
+            setNote('该条输入尚未载入到可视区域，请先「加载全部」');
+          }
         }
-      }, [snapshot]);
+      }, [sessions, sessionId]);
 
       // If collapsed, render the clean edge tab
       if (collapsed) {
@@ -614,7 +771,7 @@ window.__ModuleLoader__.load({
                         className: 'dsh-ph-item',
                         'data-active': isAct ? 'true' : 'false',
                         title: p.text || '（无文本）',
-                        onClick: function () { handleJump(p.seq, idx); },
+                        onClick: function () { handleJump(p, idx); },
                         children: [
                           jsxRuntime.jsxs('div', {
                             className: 'dsh-ph-item-meta',
@@ -624,7 +781,9 @@ window.__ModuleLoader__.load({
                               jsxRuntime.jsx('span', { className: 'dsh-ph-item-time', children: formatTime(p.time) }),
                               p.kind === 'steering'
                                 ? jsxRuntime.jsx('span', { className: 'dsh-ph-item-kind', children: '插话' })
-                                : null,
+                                : p.kind === 'command'
+                                  ? jsxRuntime.jsx('span', { className: 'dsh-ph-item-kind', children: '指令' })
+                                  : null,
                             ],
                           }),
                           jsxRuntime.jsx('div', {
@@ -634,7 +793,7 @@ window.__ModuleLoader__.load({
                           }),
                         ],
                       },
-                      p.seq,
+                      p.key || p.seq,
                     );
                   }),
                 }),
@@ -652,12 +811,10 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('conversation.session.header.utilities', function () {
         return ctx.slots.register(
           { name: 'conversation.session.header.utilities', id: 'prompt-history', order: 10 },
-          function (ownerProps) {
-            return jsxRuntime.jsx(PromptOutlineDock, {
-              sessionId: ownerProps.sessionId,
-              useSession: ownerProps.useSession,
+          function (props) {
+            return jsxRuntime.jsx(PromptOutlineDock, Object.assign({}, props, {
               sessions: ctx.sessions,
-            });
+            }));
           },
         );
       });

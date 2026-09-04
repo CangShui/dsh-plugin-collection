@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-prompt-history",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepSeek Harness (DSH) Web 界面对话大纲与输入历史导航插件，支持右侧悬浮目录、点击精准跳转高亮及长上下文一键加载全部历史。",
   "type": "module",
   "main": "lib/index.js",
@@ -32,7 +32,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat"
       ]
     }
   },
