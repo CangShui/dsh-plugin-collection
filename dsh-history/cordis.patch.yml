@@ -1,0 +1,11 @@
+# dsh-plugin-prompt-history — bundle patch layer (auto-mounted by dsh.bundle).
+#
+# 把插件挂到 Web profile 的配置树：host 半（空壳，仅用于让 Loader 收录这个包）
+# 与本文件声明的 client 半（`exports["./client"]`，经 package.json 的
+# dsh.client 声明被 node 半扫描进 window.__DSH_BOOT__）。
+#
+# 安装后默认启用。若要临时停用，把 insert 列表里的条目注释掉即可。
+
+- insert:
+    - id: prompt-history
+      name: 'dsh-plugin-prompt-history'
