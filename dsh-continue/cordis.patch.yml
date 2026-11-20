@@ -1,0 +1,25 @@
+# dsh-continue bundle patch
+#
+# 一行 insert，把插件挂进 profile 的根上下文（不是某个 agent preset 里）。
+# 根上下文没有 scope tag，于是 agent/status、agent/disposed 这些 scope-filtered
+# 事件对所有会话都收得到 —— 这正是「每条会话各自开关」需要的视角。
+#
+# config 说明：
+#   text                  自动补发的内容
+#   delayMs               idle 之后再等多久才发（给「用户刚好也在敲字」留观察窗口）
+#   maxRounds             每次开启后的补发上限，0 = 不限
+#   maxConsecutiveErrors  连续多少轮以 error 结束后自动关闭
+#   continueOnError       单轮 error 结束后是否也续跑
+#   stopOnUserAbort       用户点停止时是否自动关闭
+- insert:
+    - id: dsh-continue
+      name: dsh-continue
+      inject: [ commands, agents ]
+      config:
+        enabled: true
+        text: "继续"
+        delayMs: 500
+        maxRounds: 0
+        maxConsecutiveErrors: 2
+        continueOnError: true
+        stopOnUserAbort: true

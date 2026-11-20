@@ -1,0 +1,54 @@
+{
+  "name": "dsh-continue",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness 自动续跑插件：/continue on 之后会话停下来就自动补发「继续」，/continue off 结束。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "INSTALL.md",
+    "USAGE.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run.mjs",
+    "verify": "node scripts/verify-profile.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CangShui/dsh-plugin-collection.git",
+    "directory": "dsh-continue"
+  },
+  "homepage": "https://github.com/CangShui/dsh-plugin-collection/tree/main/dsh-continue#readme",
+  "bugs": {
+    "url": "https://github.com/CangShui/dsh-plugin-collection/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "dsh-plugins",
+    "deepseek-harness",
+    "continue",
+    "auto-continue",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

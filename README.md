@@ -8,11 +8,15 @@ DSH（DeepSeek Harness）插件集合仓库。根目录每个文件夹是一个�
 | [`dsh-history/`](./dsh-history) | `dsh-plugin-prompt-history` | 对话大纲/输入历史导航，右侧悬浮目录 + 一键加载全部历史 |
 | [`dsh-update/`](./dsh-update) | `dsh-plugin-about` | 设置页「关于」区块：版本检测与一键升级 |
 | [`dsh-barave/`](./dsh-barave) | `dsh-web-search-brave` | Brave Search API 驱动的 `ctx.web` 搜索 provider |
+| [`dsh-continue/`](./dsh-continue) | `dsh-continue` | 自动续跑：`/continue on` 之后会话停下就自动补发「继续」，`/continue off` 结束 |
 
 ## 安装
 
 各插件的安装方式见对应目录下的 `README.md`。一般流程是把包放到
 `~/.dsh/profiles/web/node_modules/<包名>`，并在 profile 的 bundle 中启用。
+
+少数插件带一键安装脚本，见各目录 `INSTALL.md`，例如
+[`dsh-continue/INSTALL.md`](./dsh-continue/INSTALL.md)。
 
 ## 历史
 

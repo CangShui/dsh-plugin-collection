@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+*.tmp
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# 本地探查产物（scripts/extract-asar.mjs 默认写到工程目录之外，这里只是兜底）
+.inspect/
